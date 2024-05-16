@@ -1,0 +1,17 @@
+{
+  "name": "main-app",
+  "version": "1.0.0",
+  "main": "main-app.js",
+  "scripts": {
+    "start": "node main-app.js",
+    "dev": "nodemon main-app.js"
+  },
+  "dependencies": {
+    "axios": "^0.21.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-session": "^1.17.1",
+    "hbs": "^4.2.0",
+    "mysql2": "^3.9.7"
+  }
+}
