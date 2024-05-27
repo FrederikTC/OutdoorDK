@@ -1,40 +1,51 @@
 # DLS-OutdoorDK
-Project
+This project is a Shelter Booking System implemented using a microservices architecture. It allows users to register, log in, view and update their profiles, book shelters, and view their booking history. Admins can create and update shelter information.
 
-OutdoorDK
-Front-page:
-- [ ] Simple information page with nice outdoor pictures of Denmark.
+Before you begin, ensure you have met the following requirements:
+- Node.js: Version 14.x or later
+- MySQL: Version 5.7 or later
+- Git: Version control system to clone the repository
 
-- [ ] A playable background video of drone outdoor life in Denmark.
+# Clone the Repository #
+Clone this repository to your local machine using the following command:
 
-Login:
-- [ ] Create back-end register/login
+git clone https://github.com/yourusername/shelter-booking-system.git
+cd shelter-booking-system
 
-- [ ] Create front-end register/login
+# For main-app
+cd main-app
+npm install
 
-- [ ] Test functionality
+# For auth-service
+cd ../auth-service
+npm install
 
+# For profile-service
+cd ../profile-service
+npm install
 
-Book:
-- [ ] Create full crud of accommodations of outdoorDK
+# For shelter-service
+cd ../shelter-service
+npm install
 
-- [ ] Hard-code 10 accommodations.
+# Create a .env file in each service directory
 
-- [ ] Be able to press book on specific accommodations.
-- [ ] Booked accommodations should appear unbookable after someone booked the accommodation.
+# Start the Authentication Service
+cd auth-service
+npm run dev
 
-Store:
-- [ ] Create full crud of store products
+# Start the Profile Service
+cd ../profile-service
+npm run dev
 
-- [ ] Hard-code 10 products with price.
+# Start the Shelter Service
+cd ../shelter-service
+npm run dev
 
-- [ ] Simple buy functionality.
+# Start the Main Application
+cd ../main-app
+npm start
 
-Community:
-Idea is wip
-
-Profile-page:
-Idea is wip
 
 
 
