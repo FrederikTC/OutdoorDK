@@ -3,16 +3,25 @@ const mysql = require('mysql2');
 const dotenv = require('dotenv');
 const bcrypt = require('bcryptjs');
 const session = require('express-session');
+const { consumeQueue } = require('../utils/rabbitmq');
 
+// Load environment variables from .env file
 dotenv.config({ path: './.env' });
+
+// Log environment variables to ensure they are loaded correctly
+console.log('Database host:', process.env.DATABASE_HOST);
+console.log('Database user:', process.env.DATABASE_USER);
+console.log('Database password:', process.env.DATABASE_PASSWORD);
+console.log('Database name:', process.env.DATABASE);
+console.log('Session secret:', process.env.SESSION_SECRET);
 
 const app = express();
 
 // Set up MySQL connection
 const db = mysql.createConnection({
     host: process.env.DATABASE_HOST,
-    user: process.env.DATABASE_ROOT,
-    password: process.env.DATABASE_ROOT_PASSWORD,
+    user: process.env.DATABASE_USER,
+    password: process.env.DATABASE_PASSWORD,
     database: process.env.DATABASE,
     port: 3306
 });
@@ -20,7 +29,7 @@ const db = mysql.createConnection({
 // Connect to MySQL
 db.connect((error) => {
     if (error) {
-        console.log(error);
+        console.log('Database connection error:', error);
     } else {
         console.log("MySQL connected...");
     }
@@ -37,63 +46,86 @@ app.use(session({
     saveUninitialized: false
 }));
 
-// Registration API
-app.post("/register", (req, res) => {
-    const { name, email, password, password_confirm } = req.body;
+// RabbitMQ setup
+const AUTH_SERVICE_QUEUE = 'auth_service';
+
+consumeQueue(AUTH_SERVICE_QUEUE, async (messageContent) => {
+    try {
+        switch (messageContent.action) {
+            case 'register':
+                await handleRegister(messageContent.data);
+                break;
+            case 'login':
+                await handleLogin(messageContent.data);
+                break;
+            case 'logout':
+                await handleLogout(messageContent.data);
+                break;
+            default:
+                console.log(`Unknown action: ${messageContent.action}`);
+        }
+    } catch (error) {
+        console.error('Error handling message:', error);
+    }
+});
+
+// Registration handler
+async function handleRegister(data) {
+    const { name, email, password, password_confirm } = data;
 
     if (password !== password_confirm) {
-        return res.status(400).json({ message: 'Passwords do not match!' });
+        console.log('Passwords do not match!');
+        return;
     }
 
     db.query('SELECT email FROM users WHERE email = ?', [email], async (error, results) => {
         if (error) {
-            return res.status(500).json({ message: 'Internal Server Error' });
+            console.error('Database query error:', error);
+            return;
         }
 
         if (results.length > 0) {
-            return res.status(400).json({ message: 'This email is already in use' });
+            console.log('This email is already in use');
+            return;
         }
 
         let hashedPassword = await bcrypt.hash(password, 8);
 
-        db.query('INSERT INTO users SET ?', { name: name, email: email, password: hashedPassword }, (error, results) => {
+        db.query('INSERT INTO users SET ?', { name, email, password: hashedPassword }, (error) => {
             if (error) {
-                return res.status(500).json({ message: 'Internal Server Error' });
+                console.error('Database insert error:', error);
             } else {
-                return res.status(201).json({ message: 'User registered successfully!' });
+                console.log('User registered successfully!');
             }
         });
     });
-});
+}
 
-// Login API
-app.post('/login', (req, res) => {
-    const { email, password } = req.body;
+// Login handler
+async function handleLogin(data) {
+    const { email, password } = data;
 
     db.query('SELECT * FROM users WHERE email = ?', [email], async (error, results) => {
         if (error) {
-            return res.status(500).json({ message: 'Internal Server Error' });
+            console.error('Database query error:', error);
+            return;
         }
 
         if (results.length == 0 || !(await bcrypt.compare(password, results[0].password))) {
-            return res.status(400).json({ message: 'Email or Password is incorrect' });
+            console.log('Email or Password is incorrect');
+            return;
         }
 
-        // Set up session
-        req.session.userId = results[0].id;
-        return res.status(200).json({ message: 'Logged in successfully', userId: results[0].id });
+        // Simulate session setup
+        console.log('Logged in successfully', results[0].id);
     });
-});
+}
 
-// Logout API
-app.post('/logout', (req, res) => {
-    req.session.destroy((err) => {
-        if (err) {
-            return res.status(500).json({ message: 'Internal Server Error' });
-        }
-        res.status(200).json({ message: 'Logged out successfully' });
-    });
-});
+// Logout handler
+async function handleLogout(data) {
+    // Simulate session destruction
+    console.log('Logged out successfully');
+}
 
 // Start the server
 const port = process.env.PORT || 4000;
