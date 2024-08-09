@@ -9,8 +9,8 @@ Before you begin, ensure you have met the following requirements:
 # Clone the Repository #
 Clone this repository to your local machine using the following command:
 
-git clone https://github.com/yourusername/shelter-booking-system.git
-cd shelter-booking-system
+git clone [https://github.com/yourusername/shelter-booking-system.git](https://github.com/FrederikTC/OutdoorDK.git)
+cd OutdoorDK
 
 # For main-app
 cd main-app
