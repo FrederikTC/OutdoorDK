@@ -1,39 +1,72 @@
-// utils/rabbitmq.js
-const amqp = require('amqplib/callback_api');
+const amqp = require('amqplib');
 
-let channel = null;
+let connection;
+let channel;
 
-amqp.connect('amqp://localhost', (err, conn) => {
-    if (err) {
-        throw err;
+async function connectRabbitMQ() {
+    if (connection && channel) {
+        return;
     }
-    conn.createChannel((err, ch) => {
-        if (err) {
-            throw err;
-        }
-        channel = ch;
+
+    try {
+        connection = await amqp.connect('amqp://localhost');
+        channel = await connection.createChannel();
+        console.log('Connected to RabbitMQ');
+    } catch (error) {
+        console.error('Failed to connect to RabbitMQ:', error);
+        throw error;
+    }
+}
+
+async function publishToQueue(queueName, message, correlationId, replyTo) {
+    if (!channel) {
+        throw new Error('RabbitMQ channel is not initialized');
+    }
+
+    const messageBuffer = Buffer.from(JSON.stringify(message));
+
+    channel.sendToQueue(queueName, messageBuffer, {
+        correlationId,
+        replyTo
     });
-});
 
-function publishToQueue(queueName, data) {
-    if (channel) {
-        channel.assertQueue(queueName, { durable: true });
-        channel.sendToQueue(queueName, Buffer.from(JSON.stringify(data)), { persistent: true });
-    }
+    console.log(`Message sent to ${queueName}:`, message);
 }
 
-function consumeQueue(queueName, callback) {
-    if (channel) {
-        channel.assertQueue(queueName, { durable: true });
-        channel.consume(queueName, async (msg) => {
-            if (msg !== null) {
-                console.log(`Received message: ${msg.content.toString()}`);
-                const messageContent = JSON.parse(msg.content.toString());
-                await callback(messageContent);
+async function consumeQueue(queueName, onMessage) {
+    if (!channel) {
+        throw new Error('RabbitMQ channel is not initialized');
+    }
+
+    await channel.assertQueue(queueName, { durable: true });
+    console.log(`Waiting for messages in ${queueName}`);
+
+    return channel.consume(queueName, async (msg) => {
+        if (msg !== null) {
+            const messageContent = JSON.parse(msg.content.toString());
+            try {
+                await onMessage(messageContent, msg); // Passing msg to onMessage callback
                 channel.ack(msg);
+            } catch (error) {
+                console.error('Error processing message:', error);
             }
-        }, { noAck: false });
+        }
+    });
+}
+
+async function closeRabbitMQ() {
+    try {
+        if (channel) await channel.close();
+        if (connection) await connection.close();
+        console.log('RabbitMQ connection closed');
+    } catch (error) {
+        console.error('Error closing RabbitMQ connection:', error);
     }
 }
 
-module.exports = { publishToQueue, consumeQueue };
+module.exports = {
+    connectRabbitMQ,
+    publishToQueue,
+    consumeQueue,
+    closeRabbitMQ,
+};

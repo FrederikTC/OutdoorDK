@@ -2,15 +2,14 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const dotenv = require('dotenv');
-const { publishToQueue } = require('../utils/rabbitmq'); // Correct import path
+const { connectRabbitMQ, publishToQueue, closeRabbitMQ } = require('../utils/rabbitmq');
+const amqp = require('amqplib');
 
-dotenv.config({ path: './.env' });
+dotenv.config();
 
 const app = express();
 
 const AUTH_SERVICE_QUEUE = 'auth_service';
-const SHELTER_SERVICE_QUEUE = 'shelter_service';
-const PROFILE_SERVICE_QUEUE = 'profile_service';
 
 // Set view engine to hbs
 app.set('view engine', 'hbs');
@@ -37,9 +36,26 @@ app.use((req, res, next) => {
     next();
 });
 
-// Home route
+let channel; // To hold the RabbitMQ channel
+
+// Ensure RabbitMQ is connected before starting
+async function initializeRabbitMQ() {
+    try {
+        await connectRabbitMQ();
+        channel = await amqp.connect('amqp://localhost').then(conn => conn.createChannel());
+        console.log('RabbitMQ connection initialized successfully.');
+    } catch (error) {
+        console.error('Failed to connect to RabbitMQ:', error.message);
+        process.exit(1);
+    }
+}
+
+// Initialize RabbitMQ at application start
+initializeRabbitMQ();
+
+// Root route
 app.get('/', (req, res) => {
-    res.render('index');
+    res.render('index'); // Assuming you have an index.hbs in your views folder
 });
 
 // Register route
@@ -49,7 +65,21 @@ app.get('/register', (req, res) => {
 
 app.post('/auth/register', async (req, res) => {
     try {
-        publishToQueue(AUTH_SERVICE_QUEUE, {
+        const correlationId = generateCorrelationId();
+
+        // Create a temporary response queue
+        const responseQueue = await channel.assertQueue('', { exclusive: true });
+
+        // Consuming the temporary response queue
+        channel.consume(responseQueue.queue, (msg) => {
+            if (msg.properties.correlationId === correlationId) {
+                const response = JSON.parse(msg.content.toString());
+                res.render('register', { message: response.message || 'Registration request sent.' });
+            }
+        }, { noAck: true });
+
+        // Publishing the request to the queue
+        await publishToQueue(AUTH_SERVICE_QUEUE, {
             action: 'register',
             data: {
                 name: req.body.name,
@@ -57,8 +87,8 @@ app.post('/auth/register', async (req, res) => {
                 password: req.body.password,
                 password_confirm: req.body.password_confirm
             }
-        });
-        res.render('register', { message: 'Registration request sent.' });
+        }, correlationId, responseQueue.queue);
+
     } catch (error) {
         console.error('Error during registration:', error.message);
         res.render('register', { message: 'An error occurred' });
@@ -72,171 +102,33 @@ app.get('/login', (req, res) => {
 
 app.post('/auth/login', async (req, res) => {
     try {
-        publishToQueue(AUTH_SERVICE_QUEUE, {
+        const correlationId = generateCorrelationId();
+
+        // Create a temporary response queue
+        const responseQueue = await channel.assertQueue('', { exclusive: true });
+
+        // Consuming the temporary response queue
+        channel.consume(responseQueue.queue, (msg) => {
+            if (msg.properties.correlationId === correlationId) {
+                const authResponse = JSON.parse(msg.content.toString());
+                if (authResponse.success) {
+                    req.session.userId = authResponse.userId;
+                    res.redirect('/');
+                } else {
+                    res.render('login', { message: 'Invalid login credentials' });
+                }
+            }
+        }, { noAck: true });
+
+        // Publishing the request to the queue
+        await publishToQueue(AUTH_SERVICE_QUEUE, {
             action: 'login',
             data: req.body
-        });
-        res.redirect('/');
+        }, correlationId, responseQueue.queue);
+
     } catch (error) {
         console.error('Error during login:', error.message);
         res.render('login', { message: 'An error occurred' });
-    }
-});
-
-// Logout route
-app.post('/auth/logout', async (req, res) => {
-    try {
-        publishToQueue(AUTH_SERVICE_QUEUE, {
-            action: 'logout',
-            data: {}
-        });
-        req.session.destroy((err) => {
-            if (err) {
-                console.log(err);
-            }
-            res.redirect('/');
-        });
-    } catch (error) {
-        console.log('Error during logout:', error.message);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Protected route example
-app.get('/dashboard', (req, res) => {
-    if (!req.session.userId) {
-        return res.redirect('/login');
-    }
-    res.render('dashboard', { userId: req.session.userId });
-});
-
-// Route to create a new shelter
-app.get('/shelters/new', (req, res) => {
-    if (!req.session.userId) {
-        return res.redirect('/login');
-    }
-    res.render('new-shelter');
-});
-
-app.post('/shelters', async (req, res) => {
-    try {
-        publishToQueue(SHELTER_SERVICE_QUEUE, {
-            action: 'create_shelter',
-            data: req.body
-        });
-        res.redirect('/shelters');
-    } catch (error) {
-        let message = 'An error occurred';
-        res.render('new-shelter', { message });
-    }
-});
-
-// Route to list all shelters
-app.get('/shelters', async (req, res) => {
-    try {
-        publishToQueue(SHELTER_SERVICE_QUEUE, {
-            action: 'list_shelters',
-            data: {}
-        });
-        res.render('shelters', { shelters: [] }); // Placeholder until you implement a way to get the response back
-    } catch (error) {
-        console.error('Error fetching shelters:', error.message);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Route to book a shelter
-app.post('/bookings', async (req, res) => {
-    try {
-        publishToQueue(SHELTER_SERVICE_QUEUE, {
-            action: 'book_shelter',
-            data: {
-                user_id: req.session.userId,
-                shelter_id: req.body.shelter_id,
-                booking_date: req.body.booking_date
-            }
-        });
-        res.redirect('/bookings');
-    } catch (error) {
-        let message = 'An error occurred';
-        res.render('shelters', { message });
-    }
-});
-
-// Route to display user bookings
-app.get('/bookings', async (req, res) => {
-    try {
-        publishToQueue(SHELTER_SERVICE_QUEUE, {
-            action: 'list_bookings',
-            data: { user_id: req.session.userId }
-        });
-        res.render('bookings', { bookings: [] }); // Placeholder until you implement a way to get the response back
-    } catch (error) {
-        console.error('Error fetching bookings:', error.message);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Profile routes
-app.get('/profiles/:id', async (req, res) => {
-    console.log(`Fetching profile for user ID: ${req.params.id}`);
-    try {
-        publishToQueue(PROFILE_SERVICE_QUEUE, {
-            action: 'get_profile',
-            data: { user_id: req.params.id }
-        });
-        res.render('profile', { user: {} }); // Placeholder until you implement a way to get the response back
-    } catch (error) {
-        console.error(`Error fetching profile: ${error.message}`);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-app.post('/profiles/:id', async (req, res) => {
-    console.log(`Updating profile for user ID: ${req.params.id}`);
-    try {
-        publishToQueue(PROFILE_SERVICE_QUEUE, {
-            action: 'update_profile',
-            data: {
-                user_id: req.params.id,
-                ...req.body
-            }
-        });
-        res.redirect(`/profiles/${req.params.id}`);
-    } catch (error) {
-        console.error(`Error updating profile: ${error.message}`);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-app.post('/profiles/:id/change-password', async (req, res) => {
-    console.log(`Changing password for user ID: ${req.params.id}`);
-    try {
-        publishToQueue(PROFILE_SERVICE_QUEUE, {
-            action: 'change_password',
-            data: {
-                user_id: req.params.id,
-                ...req.body
-            }
-        });
-        res.redirect(`/profiles/${req.params.id}`);
-    } catch (error) {
-        console.error(`Error changing password: ${error.message}`);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-app.get('/profiles/:id/bookings', async (req, res) => {
-    console.log(`Fetching booking history for user ID: ${req.params.id}`);
-    try {
-        publishToQueue(PROFILE_SERVICE_QUEUE, {
-            action: 'list_bookings',
-            data: { user_id: req.params.id }
-        });
-        res.render('booking-history', { bookings: [] }); // Placeholder until you implement a way to get the response back
-    } catch (error) {
-        console.error(`Error fetching booking history: ${error.message}`);
-        res.status(500).send('Internal Server Error');
     }
 });
 
@@ -245,3 +137,15 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Main application is running on port ${port}`);
 });
+
+// Handle graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('Closing RabbitMQ connection...');
+    await closeRabbitMQ();
+    process.exit(0);
+});
+
+// Helper function to generate a unique correlation ID
+function generateCorrelationId() {
+    return Math.random().toString(36).substring(2) + Date.now().toString(36);
+}
